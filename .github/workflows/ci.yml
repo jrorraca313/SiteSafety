@@ -1,0 +1,87 @@
+# SiteSafety CI: runs the test suite on every pull request and on every push to main.
+# This is the automated version of the regression testing in our test plan (Activity 11.1).
+# There is no CD step: the final code is delivered on a USB, so nothing gets deployed.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# If someone pushes again to the same branch, cancel the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Lint + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # Unit tests make no network calls and need no database.
+      - name: Unit tests
+        run: pytest -m "not integration"
+
+  integration:
+    name: Integration tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: unit
+    # A throwaway PostgreSQL database that exists only for this run.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sitesafety
+          POSTGRES_PASSWORD: sitesafety
+          POSTGRES_DB: sitesafety_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sitesafety"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Test-only credentials for the throwaway database above. Not a real secret.
+      DATABASE_URL: postgresql://sitesafety:sitesafety@localhost:5432/sitesafety_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      # Creates the SCANS / SECURITY_EVALUATIONS / SAFETY_REPORTS tables once schema.sql exists.
+      - name: Load schema
+        run: |
+          if [ -f schema.sql ]; then
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schema.sql
+          else
+            echo "No schema.sql yet, skipping."
+          fi
+
+      - name: Integration tests
+        run: pytest -m integration

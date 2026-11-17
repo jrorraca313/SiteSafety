@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: needs a real PostgreSQL database (DATABASE_URL). CI runs these in a separate job.",
+]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# Ruff's defaults: real errors only (undefined names, unused imports, syntax problems).
+# No style rules, so nobody's PR fails over formatting.
+select = ["E4", "E7", "E9", "F"]
